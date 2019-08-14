@@ -1,1 +1,113 @@
-"Hello World" 
+<!DOCTYPE html>
+<html>
+<head>
+    <title>POC</title>
+<body>
+<input type="file" id="files" name="files[]" multiple />
+<output id="list"></output>
+
+<script>
+
+    function hexEncode(str){
+        let hex, i;
+        let result = "";
+        for (i=0; i<str.length; i++) {
+            hex = str.charCodeAt(i).toString(16);
+            if(hex.length < 2) {
+                hex = '0' + hex;
+            }
+            result += hex;
+        }
+        return result
+    }
+
+
+    let ParseNTLMHash = function(input, challenge){
+        data = input
+        function unpack(str) {
+            let bytes = [];
+            for(let i = 0; i < str.length; i++) {
+                let char = str.charCodeAt(i);
+                bytes.push(char >>> 8);
+                bytes.push(char & 0xFF);
+            }
+            return bytes[1] + (256 * bytes[3]);
+        }
+
+
+        let LMhashLen = unpack(data.substr(14,2));
+        let LMhashOffset = unpack(data.substr(16,2));
+        let LMHash = hexEncode(data.substr(LMhashOffset, LMhashLen)).toUpperCase();
+        let NthashLen = unpack(data.substr(22,2));
+        let NthashOffset = unpack(data.substr(24,2));
+
+        if(NthashLen == 24){
+            let NtHash = hexEncode(data.substr(NthashOffset, NthashLen)).toUpperCase();
+            let DomainLen = unpack(data.substr(30,2));
+            let DomainOffset = unpack(data.substr(32,2));
+            let Domain = data.substr(DomainOffset, DomainLen).replace(/[^ -~]+/g, "").replace('\n','').replace('\r','');
+            let UserLen = unpack(data.substr(38,2));
+            let UserOffset = unpack(data.substr(40,2));
+            let User = data.substr(UserOffset, UserLen).replace(/[^ -~]+/g, "").replace('\n','').replace('\r','');
+            let writehash = User+"::"+Domain+":"+LMHash+":"+NtHash+":"+challenge;
+            return writehash+"\n";
+        } else if (NthashLen > 60) {
+            let NtHash = hexEncode(data.substr(NthashOffset, NthashLen)).toUpperCase();
+            let DomainLen = unpack(data.substr(30,2));
+            let DomainOffset = unpack(data.substr(32,2));
+            let Domain = data.substr(DomainOffset, DomainLen).replace(/[^ -~]+/g, "").replace('\n','').replace('\r','');
+            let UserLen = unpack(data.substr(38,2));
+            let UserOffset = unpack(data.substr(40,2));
+            let User = data.substr(UserOffset, UserLen).replace(/[^ -~]+/g, "").replace('\n','').replace('\r','');
+
+            writehash = User+"::"+Domain+":"+challenge+":"+NtHash.substr(0,32)+":"+NtHash.substr(32);
+            return writehash+"\n";
+        }
+        return false;
+    }
+
+    function handleFileSelect(evt) {
+        var files = evt.target.files; // FileList object
+
+        // Loop through the FileList and render image files as thumbnails.
+        for (var i = 0, f; f = files[i]; i++) {
+
+            var reader = new FileReader();
+            const chunk = 50000;
+            // Closure to capture the file information.
+            reader.onload = (function(theFile) {
+                return function(e) {
+                    var raw = e.target.result;
+                    // https://developer.mozilla.org/en/JavaScript_typed_arrays
+                    var rawBytes = new Uint8Array(raw);
+                    var foundHashes = new Set();
+                    for(var i = 0; i < raw.byteLength; i+=chunk) {
+                        var challenge = '';
+                        var rawString = String.fromCharCode.apply(null, rawBytes.subarray(i, Math.min(i + (2 * chunk), raw.byteLength)));
+                        var chalindex = rawString.indexOf("NTLMSSP\x00\x02\x00\x00\x00");
+                        if(chalindex != -1){
+                            challenge = hexEncode(rawString.substr(chalindex).substring(24,32));
+                        }
+                        var auth = rawString.substr(chalindex);
+                        var hash = ParseNTLMHash(auth.substr(auth.indexOf("NTLMSSP\x00\x03\x00\x00\x00")), challenge);
+                        if(hash && !foundHashes.has(hash)){
+                            console.log("done");
+                            foundHashes.add(hash);
+
+                            // Render thumbnail.
+                            var span = document.createElement('pre');
+                            span.innerHTML = hash;
+                            document.getElementById('list').insertBefore(span, null);
+                        }
+                    }
+                };
+            })(f);
+            // Read in the image file as a data URL.
+            reader.readAsArrayBuffer(f);
+        }
+    }
+
+    document.getElementById('files').addEventListener('change', handleFileSelect, false);
+</script>
+</body>
+</html>
